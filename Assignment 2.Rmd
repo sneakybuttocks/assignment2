@@ -1,0 +1,475 @@
+#Portfolio assignment 2
+####*Experimental Methods 3*
+**Helene Hauge Westerlund**  
+21/9 2017  
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Welcome to the third exciting part of the Language Development in ASD exercise
+
+In this exercise we will delve more in depth with different practices of model comparison and model selection, by first evaluating your models from last time, then learning how to cross-validate models and finally how to systematically compare models.
+
+N.B. There are several datasets for this exercise, so pay attention to which one you are using!
+
+1. The (training) dataset from last time (the awesome one you produced :-) ).
+2. The (test) datasets on which you can test the models from last time:
+* Demographic and clinical data: https://www.dropbox.com/s/ra99bdvm6fzay3g/demo_test.csv?dl=0
+* Utterance Length data: https://www.dropbox.com/s/uxtqqzl18nwxowq/LU_test.csv?dl=0
+* Word data: https://www.dropbox.com/s/1ces4hv8kh0stov/token_test.csv?dl=0
+
+***   
+
+### Exercise 1) Testing model performance
+
+How did your models from last time perform? In this exercise you have to compare the results on the training data () and on the test data. Report both of them. Compare them. Discuss why they are different.
+
+Recreate the models you chose last time (just write the code again and apply it to Assignment2TrainData1.csv)
+```{r}
+setwd("C:/Users/Helene/Documents/RStudio working directory/Experimental Methods 3/assignment2")
+CleanData = read.csv("CleanData.csv")
+
+library(lmerTest)
+library(MuMIn)
+library(ggplot2)
+library(modelr)
+library(plyr)
+library(stringr)
+library(tidyverse)
+library(caret)
+library(Metrics)
+
+OldModel = lmer(CHI_MLU ~ Visit + Diagnosis + VerbalIQ + types_CHI + (1+Visit|Child.ID), CleanData)
+summary(OldModel)
+r.squaredGLMM(OldModel)
+```
+  
+Calculate performance of the model on the training data: root mean square error is a good measure. (Tip: google the functions rmse() and predict() )
+```{r}
+Metrics::rmse(CleanData$CHI_MLU, predict(OldModel, CleanData, allow.new.levels = TRUE))
+```
+
+Create the test dataset (apply the code from assignment 1 part 1 to clean up the 3 test datasets)
+```{r}
+Demographic_test = read.csv('demo_test.csv')
+LU_test = read.csv('LU_test.csv')
+Token_test = read.csv('token_test.csv')
+
+#Remaning columns
+LU_test = plyr::rename(LU_test, c("VISIT" = "Visit"))
+LU_test = plyr::rename(LU_test, c("SUBJ" = "Child.ID"))
+Token_test = plyr::rename(Token_test, c("VISIT" = "Visit"))
+Token_test = plyr::rename(Token_test, c("SUBJ" = "Child.ID"))
+Demographic_test = plyr::rename(Demographic_test, c("MullenRaw" = "nonVerbalIQ"))
+Demographic_test = plyr::rename(Demographic_test, c("ExpressiveLangRaw" = "VerbalIQ"))
+
+#Using regular expressions //d to remove characters in the Visit column
+LU_test$Visit = str_extract(LU_test$Visit, '\\d')
+Token_test$Visit = str_extract(Token_test$Visit, '\\d')
+
+#Removing the dots in the child names in the Child.ID column
+Demographic_test$Child.ID = gsub('\\.', '', Demographic_test$Child.ID)
+LU_test$Child.ID = gsub('\\.', '', LU_test$Child.ID)
+Token_test$Child.ID = gsub('\\.', '', Token_test$Child.ID)
+
+#Select() using tidyverse; columns we want
+Demographic_test = select(as_data_frame(Demographic_test), Child.ID, Visit, Ethnicity, Diagnosis, Gender, Age, ADOS, nonVerbalIQ, VerbalIQ)
+
+LU_test = select(as_data_frame(LU_test), Child.ID, Visit, MOT_MLU, MOT_LUstd, CHI_MLU, CHI_LUstd)
+
+Token_test = select(as_data_frame(Token_test),Child.ID, Visit, types_MOT, types_CHI, tokens_MOT, tokens_CHI)
+
+#Merging datasets
+Demo_LU = merge(Demographic_test, LU_test)
+All = merge(Demo_LU, Token_test)
+
+# ----------- # 
+
+#Taking only rows with visit as 1 to subset
+visit1 = All[which(All$Visit == '1'),]
+
+#Taking only columns we need from subset visit1
+extra = select(as.data.frame(visit1),Child.ID, ADOS, nonVerbalIQ, VerbalIQ)
+
+#Merging extra with the original dataframe
+Data = merge(All, extra, by = 'Child.ID')
+
+#Removing some columns and renaming others to make it good!
+Data = subset(Data, select = -c(ADOS.x, nonVerbalIQ.x, VerbalIQ.x)) #Removes columns
+Data = plyr::rename(Data, c("ADOS.y" = "ADOS", "nonVerbalIQ.y" = 'nonVerbalIQ', 'VerbalIQ.y' = 'VerbalIQ'))
+
+#Turning Visit into a numeric variable
+Data$Visit = as.numeric(Data$Visit)
+
+#Turning Child.ID into numbers: Use as.numeric sammen med as.factor i en linje.
+Data$Child.ID = as.numeric(as.factor(Data$Child.ID))
+
+#Renaming levels
+Data$Gender = mapvalues(Data$Gender, from = c("1", "2"), to = c("M", "F"))
+Data$Diagnosis = mapvalues(Data$Diagnosis, from = c("A", "B"), to = c("ASD", "TD"))
+
+write.csv(Data, file = "Data.csv")
+
+```
+
+
+Test the performance of the models on the test data
+```{r}
+#rmse = root mean square error
+Metrics::rmse(Data$CHI_MLU, predict(OldModel, Data, allow.new.levels = TRUE))
+```
+
+Optional: Predictions are never certain, can you identify the uncertainty of the predictions? (e.g. google predictinterval())
+```{r}
+library(merTools)
+
+predictInterval(OldModel, Data)
+```
+What does this output mean?
+fit = prediction
+upr = upper confidence interval
+lwr = lower confidence interval
+   
+***   
+
+
+### Exercise 2) Model Selection via Cross-validation (N.B: ChildMLU!)
+
+One way to reduce bad surprises when testing a model on new data is to train the model via cross-validation. 
+
+In this exercise you have to use cross-validation to calculate the predictive error of your models and use this predictive error to select the best possible model.
+
+
+Create the basic model of ChildMLU as a function of Time and Diagnosis (don't forget the random effects!).
+```{r}
+BasicModel = lmer(CHI_MLU ~ Visit + Diagnosis + (1+Visit|Child.ID), Data)
+```
+
+
+Make a cross-validated version of the model. (Tips: google the function "createFolds";  loop through each fold, train a model on the other folds and test it on the fold).
+```{r}
+
+k = 10 #number of folds
+
+Folds = createFolds(unique(CleanData$Child.ID, k=k)) #unique assures that no 'leakage' happens (that a child is in both training and testing)
+
+CleanData$Prediction = rep(0,nrow(CleanData))
+
+TestValues = NULL
+TrainValues = NULL
+n = 1
+
+#LOOP
+for(i in 1:k){
+  Test = subset(CleanData, Child.ID %in% Folds[[i]]) #creating test set, [[]] goes an extra step into the data, like opening two doors instead of one. %in% means look in each fold for 'i' data (i meaning every child and not one specific).
+  Train = subset(CleanData, !(Child.ID %in% Folds[[i]])) #! does the opposite of the above, so look in all the  folders for kids that are not in the folders.
+
+  #check if the model you made before, fits on your train data
+  newlm = lmer(CHI_MLU ~ Visit + Diagnosis + (1+Visit|Child.ID), Train)
+
+  #Get the predictions for the test set (from the model just fit on the rmse train data)
+  newpred = Metrics::rmse(predict(newlm, Test, allow.new.levels = TRUE), Test$CHI_MLU) #allow.new.levels = allows the model to include children it havent seen before (it crashes if we do not tell it this)
+  stuff = Metrics::rmse(predict(newlm, Train, allow.new.levels = TRUE), Train$CHI_MLU)
+  
+  TestValues[n]=(newpred) #show error of test model
+  TrainValues[n]=(stuff) #show error of train model
+  n = n + 1 
+
+  #Save the predictions for later use in your data set
+  CleanData$Predictions[CleanData$Child.ID %in% Folds[[i]]] = predict(newlm, Test, allow.new.levels = TRUE) #Show predictions
+
+}
+
+CleanData$Predictions #do whatever you want with these predictions
+
+Metrics::rmse(CleanData$CHI_MLU, predict(newlm, CleanData, allow.new.levels = TRUE))
+
+# PREDICTIONS
+# The numbers in the prediction column is the MLU that the model predicts for the child. For example, the child's MLU could be 1.25, and the model predicts it to be 1.53
+
+# --- Framework --- #
+# for i in folds
+# 	Select Data
+# 	  create test data; Test = subset(Data, child.id%in% fold)
+# 	  create train data; TrainD = 
+# 	Train model on train data
+# 	Test the model on test data
+#   Save the performance
+```
+We made a cross validation on 10 folds. We found the training error to be M = 0.34 and SE = 0.001, and the test error to be M = 0.81 and SE = 0.046. We found the root mean square error to be 0.3114.
+
+***   
+
+Now try to find the best possible predictive model of ChildMLU, that is, the one that produces the best cross-validated results.
+
+
+# Copy loop and run on a lot of different predictive models. Compute rmse values for them and find the best one. 
+RMSE = root mean square error
+Should be closest to 0.
+  'Metrics::rmse(predict(model, data, allow.new.levels = TRUE), data$variable)'
+
+Some different models to test:
+lmer(CHI_MLU ~ Diagnosis + VerbalIQ + (1+Visit|Child.ID), CleanData)
+lmer(CHI_MLU ~ Visit + Diagnosis + VerbalIQ + (1+Visit|Child.ID), CleanData)
+lmer(CHI_MLU ~ Visit + Diagnosis + VerbalIQ + types_CHI + (1+Visit|Child.ID), CleanData)
+lmer(CHI_MLU ~ Diagnosis + VerbalIQ + types_CHI + nonVerbalIQ (1+Visit|Child.ID), CleanData)
+lmer(CHI_MLU ~ Diagnosis + VerbalIQ + types_CHI + types_MOT (1+Visit|Child.ID), CleanData)
+
+----- Model 1 -----
+```{r}
+k = 10
+Folds = createFolds(unique(CleanData$Child.ID, k=k))
+
+CleanData$Prediction = rep(0,nrow(CleanData))
+
+TestValues = NULL
+TrainValues = NULL
+n = 1
+
+for(i in 1:k){
+  Test = subset(CleanData, Child.ID %in% Folds[[i]])
+  Train = subset(CleanData, !(Child.ID %in% Folds[[i]]))
+
+  # Insert new models here:
+  newlm = lmer(CHI_MLU ~ Diagnosis + VerbalIQ + (1+Visit|Child.ID), CleanData)
+  
+  
+  newpred = Metrics::rmse(predict(newlm, Test, allow.new.levels = TRUE), Test$CHI_MLU)
+  stuff = Metrics::rmse(predict(newlm, Train, allow.new.levels = TRUE), Train$CHI_MLU)
+  
+  TestValues[n]=(newpred) #error of test model
+  TrainValues[n]=(stuff) #error of train model
+  n = n + 1 
+}
+
+TestValues
+TrainValues
+
+mean(TestValues)
+sd(TestValues)/sqrt(length(TestValues))
+
+mean(TrainValues)
+sd(TrainValues)/sqrt(length(TrainValues))
+
+Metrics::rmse(CleanData$CHI_MLU, predict(newlm, CleanData, allow.new.levels = TRUE))
+
+```
+
+----- Model 2 -----
+```{r}
+k = 10
+Folds = createFolds(unique(CleanData$Child.ID, k=k))
+
+CleanData$Prediction = rep(0,nrow(CleanData))
+
+TestValues = NULL
+TrainValues = NULL
+n = 1
+
+for(i in 1:k){
+  Test = subset(CleanData, Child.ID %in% Folds[[i]])
+  Train = subset(CleanData, !(Child.ID %in% Folds[[i]]))
+
+  # Insert new models here:
+  newlm = lmer(CHI_MLU ~ Visit + Diagnosis + VerbalIQ + (1+Visit|Child.ID), CleanData)
+  
+  
+  newpred = Metrics::rmse(predict(newlm, Test, allow.new.levels = TRUE), Test$CHI_MLU)
+  stuff = Metrics::rmse(predict(newlm, Train, allow.new.levels = TRUE), Train$CHI_MLU)
+  
+  TestValues[n]=(newpred) #error of test model
+  TrainValues[n]=(stuff) #error of train model
+  n = n + 1 
+}
+
+mean(TestValues)
+sd(TestValues)/sqrt(length(TestValues))
+
+mean(TrainValues)
+sd(TrainValues)/sqrt(length(TrainValues))
+
+Metrics::rmse(CleanData$CHI_MLU, predict(newlm, CleanData, allow.new.levels = TRUE))
+
+```
+
+----- Model 3 -----
+```{r}
+k = 10
+Folds = createFolds(unique(CleanData$Child.ID, k=k))
+
+CleanData$Prediction = rep(0,nrow(CleanData))
+
+TestValues = NULL
+TrainValues = NULL
+n = 1
+
+for(i in 1:k){
+  Test = subset(CleanData, Child.ID %in% Folds[[i]])
+  Train = subset(CleanData, !(Child.ID %in% Folds[[i]]))
+
+  # Insert new models here:
+  Model3 = lmer(CHI_MLU ~ Visit + Diagnosis + VerbalIQ + types_CHI + (1+Visit|Child.ID), CleanData)
+  
+  
+  newpred = Metrics::rmse(predict(Model3, Test, allow.new.levels = TRUE), Test$CHI_MLU)
+  stuff = Metrics::rmse(predict(Model3, Train, allow.new.levels = TRUE), Train$CHI_MLU)
+  
+  TestValues[n]=(newpred) #error of test model
+  TrainValues[n]=(stuff) #error of train model
+  n = n + 1 
+}
+
+mean(TestValues)
+sd(TestValues)/sqrt(length(TestValues))
+
+mean(TrainValues)
+sd(TrainValues)/sqrt(length(TrainValues))
+
+Metrics::rmse(CleanData$CHI_MLU, predict(Model3, CleanData, allow.new.levels = TRUE))
+
+```
+
+
+----- Model 4 -----
+```{r}
+k = 10
+Folds = createFolds(unique(CleanData$Child.ID, k=k))
+
+CleanData$Prediction = rep(0,nrow(CleanData))
+
+TestValues = NULL
+TrainValues = NULL
+n = 1
+
+for(i in 1:k){
+  Test = subset(CleanData, Child.ID %in% Folds[[i]])
+  Train = subset(CleanData, !(Child.ID %in% Folds[[i]]))
+
+  # Insert new models here:
+  newlm = lmer(CHI_MLU ~ Diagnosis + VerbalIQ + types_CHI + nonVerbalIQ + (1+Visit|Child.ID), CleanData)
+  
+  
+  newpred = Metrics::rmse(predict(newlm, Test, allow.new.levels = TRUE), Test$CHI_MLU)
+  stuff = Metrics::rmse(predict(newlm, Train, allow.new.levels = TRUE), Train$CHI_MLU)
+  
+  TestValues[n]=(newpred) #error of test model
+  TrainValues[n]=(stuff) #error of train model
+  n = n + 1 
+}
+
+mean(TestValues)
+sd(TestValues)/sqrt(length(TestValues))
+
+mean(TrainValues)
+sd(TrainValues)/sqrt(length(TrainValues))
+
+Metrics::rmse(CleanData$CHI_MLU, predict(newlm, CleanData, allow.new.levels = TRUE))
+
+```
+
+
+----- Model 5 -----
+```{r}
+k = 10
+Folds = createFolds(unique(CleanData$Child.ID, k=k))
+
+CleanData$Prediction = rep(0,nrow(CleanData))
+
+TestValues = NULL
+TrainValues = NULL
+n = 1
+
+for(i in 1:k){
+  Test = subset(CleanData, Child.ID %in% Folds[[i]])
+  Train = subset(CleanData, !(Child.ID %in% Folds[[i]]))
+
+  # Insert new models here:
+  newlm = lmer(CHI_MLU ~ Diagnosis + VerbalIQ + types_CHI + types_MOT + (1+Visit|Child.ID), CleanData)
+  
+  
+  newpred = Metrics::rmse(predict(newlm, Test, allow.new.levels = TRUE), Test$CHI_MLU)
+  stuff = Metrics::rmse(predict(newlm, Train, allow.new.levels = TRUE), Train$CHI_MLU)
+  
+  TestValues[n]=(newpred) #error of test model
+  TrainValues[n]=(stuff) #error of train model
+  n = n + 1 
+}
+
+mean(TestValues)
+sd(TestValues)/sqrt(length(TestValues))
+
+mean(TrainValues)
+sd(TrainValues)/sqrt(length(TrainValues))
+
+Metrics::rmse(CleanData$CHI_MLU, predict(newlm, CleanData, allow.new.levels = TRUE))
+
+```
+The best possible predictive model of ChildMLU (out of my five models) is model 3, with a root mean square error(rmse) of 0.3055
+
+***   
+
+- Bonus Question 1: How would you go comparing the performance of the basic model and the cross-validated model on the testing set?
+- Bonus Question 2: What is the effect of changing the number of folds? Can you plot RMSE as a function of number of folds?
+- Bonus Question 3: compare the cross-validated predictive error against the actual predictive error on the test data
+
+***   
+
+### Exercise 3) Assessing the single child
+
+Let's get to business. This new kiddo - Bernie (BERNIE IS CHILD 2) - has entered your clinic. This child has to be assessed according to his group's average and his expected development.
+
+Bernie is one of the six kids in the test dataset, so make sure to extract that child alone for the following analysis.
+
+```{r}
+#Making Bernie subset
+Bernie = Data[ which(Data$Child.ID=='2'), ]
+```
+
+***   
+
+How does the child fare in ChildMLU compared to the average TD child, at each visit? 
+Define the distance in terms of absolute difference between this Child and the average TD.
+
+```{r}
+#Getting the means in a new data frame
+Means = CleanData %>% #Creating data frame
+  filter(Diagnosis == 'TD') %>% #Getting only TD children
+  group_by(Visit) %>% #Running on each visit
+  summarise(Mean = mean(CHI_MLU, na.rm=T)) #get means
+
+Means
+#Now we get a data frame with the mean difference between Bernie and the average typically developing child, at each visit.
+#Bernie has a gradually bigger difference during the course of the visits.
+
+```
+
+***   
+
+How does the child fare compared to the model predictions at Visit 6? Is the child below or above expectations? (tip: use the predict() [use rmse???] function on Bernie's data only and compare the prediction with the actual performance of the child)
+
+```{r}
+#Using predict to predict Bernies performance, using Model3 which was my best predictive model.
+predict(Model3, Bernie) #the last number in the output is the MLU at visit 6
+
+#Difference
+3.483730 - 3.448413
+
+```
+The predicted MLU of Bernie at visit 6 is 3.075724, while the actual MLU of Bernie at visit 6 is 3.448413.
+The difference between these two is 0.035317, which is not a lot.
+
+***   
+
+### OPTIONAL: Exercise 4) Model Selection via Information Criteria
+Another way to reduce the bad surprises when testing a model on new data is to pay close attention to the relative information criteria between the models you are comparing. Let's learn how to do that!
+
+Re-create a selection of possible models explaining ChildMLU (the ones you tested for exercise 2, but now trained on the full dataset and not cross-validated).
+
+Then try to find the best possible predictive model of ChildMLU, that is, the one that produces the lowest information criterion.
+
+- Bonus question for the optional exercise: are information criteria correlated with cross-validated RMSE? That is, if you take AIC for Model 1, Model 2 and Model 3, do they co-vary with their cross-validated RMSE?
+
+### OPTIONAL: Exercise 5): Using Lasso for model selection
+Welcome to the last secret exercise. If you have already solved the previous exercises, and still there's not enough for you, you can expand your expertise by learning about penalizations. Check out this tutorial: http://machinelearningmastery.com/penalized-regression-in-r/ and make sure to google what penalization is, with a focus on L1 and L2-norms. Then try them on your data!
