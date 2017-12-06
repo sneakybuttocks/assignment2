@@ -1,0 +1,220 @@
+#Portfolio assignment 1, part 4
+####*Experimental Methods 3*
+**Helene Hauge Westerlund**  
+9/10 2017  
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Welcome to the fourth exciting part of the Language Development in ASD exercise   
+
+In this exercise we will assess how many participants we would need to adequately replicate our findings (ensuring our sample size is adequate, our alpha at 0.05 and our beta at 0.8).
+
+ 
+```{r warning=F, message=F}
+setwd("C:/Users/Helene/Documents/RStudio working directory/Experimental Methods 3/assignment1, part 3-4")
+
+library(lmerTest)
+library(MuMIn)
+library(ggplot2)
+library(modelr)
+library(plyr)
+library(stringr)
+library(tidyverse)
+library(caret)
+library(Metrics)
+```
+
+***   
+
+### Exercise 1
+   
+How much power does your study have (if your model estimates are quite right)?
+Load your dataset, fit your favorite model, assess power for your main effects and interactions of interest.
+```{r}
+CleanData = read.csv("CleanData.csv")
+library(simr)
+
+#Assessing power. The smaller the effect size, the more participants we need to get adequate power
+Model = lmer(CHI_MLU ~ Visit + Diagnosis + VerbalIQ + types_CHI + (1+Visit|Child.ID), CleanData)
+summary(Model)
+
+power_visit = powerSim(Model, fixed("Visit"), nsim=10)
+power_visit
+
+power_diagnosis = powerSim(Model, fixed("Diagnosis"), nsim=10)
+power_diagnosis
+
+power_verbalIQ = powerSim(Model, fixed("VerbalIQ"), nsim=10)
+power_verbalIQ
+
+power_types = powerSim(Model, fixed("types_CHI"), nsim=10)
+power_types
+```
+To calculate the power of our study, We ran 10 simulations on each of our predictors. The effect size in our model is 0.077.
+
+* For the predictor 'visit', we get power of 100% (with 95% confidence interval ranging from 69.15 to 100).   
+
+* For the predictor 'diagnosis', we get power of 30% (with 95% confidence interval ranging from 6.67 to 65.25).   
+
+* For the predictor 'verbal IQ', we get power of 80% (with 95% confidence interval ranging from 44.39 to 97.48).   
+
+* For the predictor 'types of words', we get power of 100% (with 95% confidence interval ranging from 69.15 to 100).   
+
+We get adequate power for visit (100%), verbal IQ (80%), and types of words (100%). The 95% confidence intervals are really wide, which is because we only did 10 simulations. More simulations (like 200) would take an eternity. For the study to have adequate power, the percentage should be 80 or higher.
+
+Knowing the power of our study enables us to:
+- See if the values we get from our statistical analyses can be trusted
+- Know if more participants would be preferred, given our effect size
+- Generally, a power analysis makes you think about if you have considered your study and the methods of it sufficiently.
+   
+***   
+
+### Exercise 2
+
+Performing a more conservative power analysis:   
+
+Identify and justify a minimum effect size for each of your relevant effects.
+```{r}
+#To find a minimum effect size for the fixed effects, we look at estimates in our model
+summary(Model)
+
+# To read e-stuff ---> -e you move the comma to the left the number of times specified (e.g. e-02 move the comma two times), and e+ move the comma to the right.
+
+# Estimates:
+#   Visit = 0.07684
+#   DiagnosisTD = 0.06792
+#   VerbalIQ = 0.02023
+#   types_CHI = 0.008074
+
+```
+***   
+
+Take the model from exercise 1 and replace the effects with the minimum effect size that you'd accept.
+```{r}
+# Setting effect sizes:
+# To find fitting effect sizes, we can do a pilot study or look at similar previous studies, and see what effect sizes they used. To be a bit more conservative, we could set our effect sizes a little below those. Here i will choose the estimates from my summary(Model), and make them a bit lower to be conservative.
+
+fixef(Model)["Visit"] <- 0.07 #the number after the arrow is an effect size
+fixef(Model)["DiagnosisTD"] <- 0.05
+fixef(Model)["VerbalIQ"] <- 0.01
+fixef(Model)["types_CHI"] <- 0.005
+
+```
+
+
+Assess the power curve by Child.ID, identifying an ideal number of participants to estimate each effect
+```{r}
+powerCurveVisit = powerCurve(Model, fixed("Visit"), along="Child.ID", nsim=10)
+plot(powerCurveVisit)
+
+powerCurveVerbalIQ = powerCurve(Model, fixed("VerbalIQ"), along="Child.ID", nsim=10)
+plot(powerCurveVerbalIQ)
+
+powerCurveTypes = powerCurve(Model, fixed("types_CHI"), along="Child.ID", nsim=10)
+plot(powerCurveTypes)
+
+```
+Given the effect size that I provided for the fixed effect Visit, the power curve shows us that we need about 26 participants to get a minimum adequate power of 80%.
+For the fixed effect VerbalIQ, the power curve shows us that we need about 29 participants to get a minimum adequate power of 80%, although the power curve stalls at 80% for some time, so it might be better to have above 42 participants to get enough power for this effect.
+Lastly, for the fixed effect types_CHI, about 6 participants are needed to get an adequate power of 80%.
+
+When trying to calculate power for my fixed effect DiagnosisTD, the plot comes out weird, which i guess is because it is a factor. It might not make any sense to do a power analysis on that effect.
+
+***   
+
+NOT USING THIS LOOP, BUT GOOD TO HAVE!
+```{r}
+### Riccardo's clumsy function to simulate new participants
+### TO DO points are only notes for myself, so not part of the assignment
+
+createNewData <- function (participants,visits,model){
+  # participants is the number of subjects
+  # visits is the number of visits
+  # TO DO: LOOP THROUGH ALL FE ROWS AND AUTOMATICALLY EXTRACT NAMES OF FIXED EFFECTS AND ESTIMATES
+  fe <- fixef(model)
+  Intercept <- fe[1] #intercept
+  bVisit <- fe[2] #visit
+  bDiagnosis <- fe[3] #diagnosis
+  bVisitDiagnosis <- fe[4] #visit diagnosis interaction
+  # TO DO: INTEGRATE STANDARD ERROR?
+  
+  # TO DO: LOOP THROUGH ALL VC COMPONENTS AND AUTOMATICALLY EXTRACT NAMES OF EFFECTS AND ESTIMATES
+  vc<-VarCorr(model) # variance component
+  sigmaSubject <- as.numeric(attr(vc[[1]],"stddev")[1]) # random intercept by subject
+  sigmaVisit <- as.numeric(attr(vc[[1]],"stddev")[2]) # random slope of visit over subject
+  sigmaResiduals <- as.numeric(attr(vc,"sc"))
+  sigmaCorrelation <- as.numeric(attr(vc[[1]],"correlation")[2])
+  
+  # Create an empty dataframe
+  d=expand.grid(Visit=1:visits,Child.ID=1:participants)
+  # Randomly sample from a binomial (to generate the diagnosis)
+  condition <- sample(rep(0:1, participants/2))
+  d$Diagnosis<-condition[d$Child.ID]
+  d$Diagnosis[is.na(d$Diagnosis)]<-1
+  
+  ## Define variance covariance matrices:
+  Sigma.u<-matrix(c(sigmaSubject^2,
+                    sigmaCorrelation*sigmaSubject*sigmaVisit,
+                    sigmaCorrelation*sigmaSubject*sigmaVisit,
+                    sigmaVisit^2),nrow=2)
+  
+  ## generate new fake participants (column1=RandomIntercept, column2=RandomSlope)
+  u<-mvrnorm(n=participants,
+             mu=c(0,0),Sigma=Sigma.u)
+  
+  ## now generate fake data:
+  ### the outcome is extracted from a gaussian with
+  ### the solution to the model's equation as mean and
+  ### the residual standard deviation as standard deviation 
+  d$CHI_MLU <- rnorm(participants*visits,
+                     (Intercept+u[,1]) +
+                     (bVisit+u[,2])*d$Visit + 
+                     bDiagnosis*d$Diagnosis ,sigmaResiduals)  
+  
+  return(d)
+}
+```
+
+
+### Exercise 3
+
+Assume you have only the resources to collect 30 kids (15 with ASD and 15 TDs). Identify the power for each relevant effect and discuss whether it's worth to run the study and why.
+```{r}
+# make subset of 30 kids, 15 with each diagnosis
+thirtykids = subset(CleanData[which(CleanData$Child.ID>30) ,]) #totally clumsy way to choose kids (i counted to get the right amount of ASD and TD). Could have been done in another and better way.
+
+
+#Assessing power. The smaller the effect size, the more participants we need to get adequate power
+Model = lmer(CHI_MLU ~ Visit + Diagnosis + VerbalIQ + types_CHI + (1+Visit|Child.ID), thirtykids)
+summary(Model)
+
+power_visit = powerSim(Model, fixed("Visit"), nsim=10)
+power_visit
+
+power_diagnosis = powerSim(Model, fixed("Diagnosis"), nsim=10)
+power_diagnosis
+
+power_verbalIQ = powerSim(Model, fixed("VerbalIQ"), nsim=10)
+power_verbalIQ
+
+power_types = powerSim(Model, fixed("types_CHI"), nsim=10)
+power_types
+
+
+```
+To calculate the power of our study, We ran 10 simulations on each of our predictors.
+
+* For the predictor 'visit', we get power of 80% (with 95% confidence interval ranging from 44.39 to 97.48), and an effect size of 0.061.
+
+* For the predictor 'diagnosis', we get power of 30% (with 95% confidence interval ranging from 6.67 to 65.25). 
+
+* For the predictor 'verbal IQ', we get power of 0% (with 95% confidence interval ranging from 0.00 to 30.85), and an effect size of 0.0062.   
+
+* For the predictor 'types of words', we get power of 100% (with 95% confidence interval ranging from 69.15 to 100), and an effect size of 0.0084.   
+
+We get adequate power for visit (80%) and types of words (100%), but inadequate power for the two other variables.
+
+Currently, the study would not be worth running, because of the inadequate power. By using fewer kids, we will get bigger effect sizes, but this in turn gives us less power. This is an evil circle, and we need to use more participants to be able to trust the results of our statistical analyses.
+
