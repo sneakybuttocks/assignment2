@@ -115,6 +115,9 @@ plot(powerCurveVerbalIQ)
 powerCurveTypes = powerCurve(Model, fixed("types_CHI"), along="Child.ID", nsim=10)
 plot(powerCurveTypes)
 
+powerCurveTypes = powerCurve(Model, fixed("Diagnosis"), along="Child.ID", nsim=10)
+plot(powerCurveTypes)
+
 ```
 Given the effect size that I provided for the fixed effect Visit, the power curve shows us that we need about 26 participants to get a minimum adequate power of 80%.
 For the fixed effect VerbalIQ, the power curve shows us that we need about 29 participants to get a minimum adequate power of 80%, although the power curve stalls at 80% for some time, so it might be better to have above 42 participants to get enough power for this effect.
